@@ -1,6 +1,6 @@
 # closed-editor-bridge
 
-[📃 Tampermonkey Script](https://greasyfork.org/) *(coming soon)*
+[📃 Tampermonkey Script](https://greasyfork.org/en/scripts/586326-closed-editor-bridge)
 
 *Extension can be created with [browser-script-to-extension](https://github.com/greenzorro/browser-script-to-extension)*
 
