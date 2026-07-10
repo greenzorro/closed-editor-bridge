@@ -2,7 +2,9 @@
 
 [📃 Tampermonkey Script](https://greasyfork.org/en/scripts/586326-closed-editor-bridge)
 
-*Extension can be created with [browser-script-to-extension](https://github.com/greenzorro/browser-script-to-extension)*
+[🌐 Chrome Web Store](https://chrome.google.com/webstore/detail/mgkhacgoododonkdglofbdfmbbnffcmi) | [🗄️ Download ZIP](https://github.com/greenzorro/closed-editor-bridge/raw/main/closed-editor-bridge.zip)
+
+*Extension automatically created with [browser-script-to-extension](https://github.com/greenzorro/browser-script-to-extension)*
 
 **Paste Markdown articles into closed rich-text editors**
 

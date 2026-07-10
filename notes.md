@@ -352,28 +352,7 @@ Userscript 是主发布形态，README 保留 Greasy Fork 安装入口。
 - README 安装链接
 - notes 中涉及用户流程、快捷键、检测规则和限制的说明
 
-### 6.2 Chrome Extension 生成
-
-本项目先实现 userscript，不直接维护 Chrome Extension 代码。
-
-`BASE_PATH_CODING/projects/browser-script-to-extension` 可以自动扫描带 `==UserScript==` 元数据的 `.js` 文件，生成 Manifest V3 插件：
-
-```bash
-python build.py /path/to/closed-editor-bridge
-```
-
-发布 Chrome Extension 前需要补齐：
-- `store_assets/icon.png`
-- 1 到 5 张截图
-- 需要时添加 `store_assets/upload_config.json`
-
-### 6.3 发布产物归属
-
-`store_assets/`、`extension/` 和 zip 包属于发布产物，不作为 userscript 主流程的一部分。
-
-生成的 `extension/` 和 zip 包与三个兄弟项目保持同样工作流。
-
-### 6.4 代码风格
+### 6.2 代码风格
 
 - 使用模块化对象组织功能
 - 配置集中放在 `CONFIG`
