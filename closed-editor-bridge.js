@@ -76,7 +76,7 @@
             const gaps = [];
             let skippedCount = 0;
 
-            chunks.forEach((chunk, i) => {
+            chunks.forEach((chunk) => {
                 const isBlank = !chunk.trim();
                 gaps.push({
                     text: chunk,
@@ -834,8 +834,8 @@
     //=======================================
     // 编辑器检测
     //=======================================
-    // 通用脚本注入全站，靠检测页面是否含可编辑元素来决定是否启用
-    // 无 contenteditable / textarea 的页面（搜索、资讯、视频、购物首页等）直接静默退出，零打扰
+    // 通用脚本注入全站，靠编辑器指纹和尺寸启发式判断是否启用
+    // 未命中富文本编辑器或大型编辑区的页面直接静默退出，零打扰
     const Detector = {
         /**
          * 判断当前页面是否含有真正的富文本编辑器或大型编辑区
@@ -897,7 +897,6 @@
                 if (ta.id === 'ceb-input') continue;
                 const rect = ta.getBoundingClientRect();
                 const height = rect.height || ta.clientHeight;
-                const width = rect.width || ta.clientWidth;
                 if (height >= 120 || ta.rows >= 8) {
                     // 检查是否在编辑器容器中，且伴随工具栏
                     const inEditorContainer = ta.closest('[class*="editor"]') || ta.closest('[id*="editor"]');
