@@ -299,3 +299,108 @@ Node 测试不能覆盖真实编辑器行为。发布前重点验证：
 - `store_assets/` 待补图标和截图
 - `extension/` 待 `browser-script-to-extension` 生成
 - git commit / push 待用户授权
+
+---
+
+## 10. 富文本编辑器精准检测算法
+
+针对全网域名匹配时可能发生的“大范围误伤”（如飞书表格单元格编辑器、百度/腾讯/DeepL等在线翻译输入区、维基百科/Github等大型Wiki/Markdown纯文本域），本脚本采用了一套多维度启发式判定算法。
+
+### 10.1 核心算法设计原则
+
+1. **同源 Iframe 隔离判定（高置信度）**：
+   - **逻辑**：大多数经典富文本编辑器（如 UEditor, TinyMCE 等）为了样式隔离，都会使用 `iframe` 并将其中的 `body` 设为 `contenteditable`。单行搜索框、聊天框、单元格等非富文本输入绝不会放在 iframe 中。
+   - **尺寸宽大处理**：为了兼容 UEditor 在空内容状态下渲染高度仅有 `51px` 的极矮初始状态，对于 iframe 中的编辑器只要求基本可见度（宽度 > 100px 且高度 > 30px）。
+
+2. **主文档 Contenteditable 限制判定（双重保护）**：
+   - **逻辑**：直接在主文档中的 `[contenteditable]`（如 wangEditor, ProseMirror, Notion 等）需要与 ChatGPT/Gemini 初始聊天框、飞书表格单元格编辑框（高约 20px）进行区分。
+   - **特征条件**：元素尺寸必须 $\ge 80\text{px} \times 80\text{px}$，且必须**包含已知富文本框架指纹类名**，或者页面上**伴随有富文本格式化工具栏（Toolbar）**。这能有效排除 DeepL、百度翻译等虽有大高度但无任何文本排版功能的文本翻译区域。
+
+3. **独立 Textarea 排除原则**：
+   - **逻辑**：纯文本 textarea（如维基百科编辑区、Github 评论文本域、腾讯翻译君等）完全支持直接粘贴 Markdown 全文。因此，在没有知名 Markdown 框架包裹或没有 toolbar 伴随的情况下，**无条件排除所有独立原生 textarea**。
+
+### 10.2 算法实现参考 (JavaScript)
+
+```javascript
+    const Detector = {
+        hasEditor() {
+            // 1. 知名编辑器类名指纹匹配
+            const knownEditorSelectors = [
+                '.tox-tinymce', '.tox-editor-container',
+                '.ck-editor', '.ck-content',
+                '.ql-container', '.ql-editor',
+                '.w-e-text-container', '.w-e-text',
+                '.edui-editor', '.edui-body-container',
+                '.note-editable',
+                '.DraftEditor-editorContainer',
+                '.medium-editor-element',
+                '.editormd',
+                '.CodeMirror',
+                '.trix-content'
+            ];
+            if (document.querySelector(knownEditorSelectors.join(','))) {
+                return true;
+            }
+
+            // 2. 检测同源 iframe 内部的 contenteditable
+            const iframes = document.querySelectorAll('iframe');
+            for (const iframe of iframes) {
+                try {
+                    const doc = iframe.contentDocument || iframe.contentWindow.document;
+                    if (doc && doc.querySelector('[contenteditable=""], [contenteditable="true"]')) {
+                        if (iframe.clientWidth > 100 && iframe.clientHeight > 30) {
+                            return true;
+                        }
+                    }
+                } catch (e) {}
+            }
+
+            // 3. 通用 contenteditable 启发式规则
+            const editables = document.querySelectorAll('[contenteditable=""], [contenteditable="true"]');
+            for (const el of editables) {
+                if (el.id === 'ceb-input') continue;
+                const rect = el.getBoundingClientRect();
+                const height = rect.height || el.clientHeight;
+                const width = rect.width || el.clientWidth;
+                
+                if (width < 80 || height < 80) continue;
+                
+                // 主文档 contenteditable 必须伴随有排版工具栏，以防止在翻译软件（如 DeepL, 百度翻译，高 200px+）上被误伤
+                const hasToolbar = el.closest('[class*="editor"]') || 
+                                  el.closest('[id*="editor"]') || 
+                                  document.querySelector('[class*="toolbar"]') || 
+                                  document.querySelector('[id*="toolbar"]') ||
+                                  document.querySelector('[role="toolbar"]');
+                if (hasToolbar) {
+                    return true;
+                }
+            }
+
+            // 4. Textarea 启发式规则
+            const textareas = document.querySelectorAll('textarea');
+            for (const ta of textareas) {
+                if (ta.id === 'ceb-input') continue;
+                const rect = ta.getBoundingClientRect();
+                const height = rect.height || ta.clientHeight;
+                const width = rect.width || ta.clientWidth;
+                if (height >= 120 || ta.rows >= 8) {
+                    const inEditorContainer = ta.closest('[class*="editor"]') || ta.closest('[id*="editor"]');
+                    const hasToolbar = document.querySelector('[class*="toolbar"]') || 
+                                      document.querySelector('[id*="toolbar"]') || 
+                                      document.querySelector('[role="toolbar"]');
+                    if (inEditorContainer && hasToolbar) {
+                        const name = (ta.name || '').toLowerCase();
+                        const id = (ta.id || '').toLowerCase();
+                        const placeholder = (ta.placeholder || '').toLowerCase();
+                        const ariaLabel = (ta.getAttribute('aria-label') || '').toLowerCase();
+                        const isChatOrSearch = /chat|search|reply|comment|send|ask|message|搜索|聊天|评论|回复|提问/i.test(name + id + placeholder + ariaLabel);
+                        if (!isChatOrSearch) {
+                            return true;
+                        }
+                    }
+                }
+            }
+            return false;
+        }
+    };
+```

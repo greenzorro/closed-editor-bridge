@@ -473,7 +473,51 @@
                     font-size: 16px; color: #666; padding: 0 4px;
                 }
                 #ceb-body { padding: 10px 12px; }
-                #ceb-panel.collapsed #ceb-body { display: none; }
+                #ceb-panel.collapsed {
+                    width: 40px !important;
+                    height: 40px !important;
+                    border-radius: 50% !important;
+                    overflow: hidden !important;
+                    background: #2563eb !important;
+                    border: 1px solid #2563eb !important;
+                    box-shadow: 0 4px 12px rgba(37, 99, 235, 0.4) !important;
+                    cursor: pointer !important;
+                    transition: transform 0.2s ease, background 0.2s ease !important;
+                }
+                #ceb-panel.collapsed:hover {
+                    transform: scale(1.05) !important;
+                    background: #1d4ed8 !important;
+                    border-color: #1d4ed8 !important;
+                }
+                #ceb-panel.collapsed #ceb-header {
+                    width: 100% !important;
+                    height: 100% !important;
+                    padding: 0 !important;
+                    background: transparent !important;
+                    border: none !important;
+                    display: flex !important;
+                    justify-content: center !important;
+                    align-items: center !important;
+                    cursor: pointer !important;
+                }
+                #ceb-panel.collapsed #ceb-title {
+                    display: none !important;
+                }
+                #ceb-panel.collapsed #ceb-collapse {
+                    width: 100% !important;
+                    height: 100% !important;
+                    color: #fff !important;
+                    font-size: 18px !important;
+                    display: flex !important;
+                    justify-content: center !important;
+                    align-items: center !important;
+                    padding: 0 !important;
+                    border: none !important;
+                    background: transparent !important;
+                }
+                #ceb-panel.collapsed #ceb-body {
+                    display: none !important;
+                }
                 #ceb-input {
                     width: 100%; height: 120px;
                     box-sizing: border-box;
@@ -598,6 +642,8 @@
         toggleCollapse() {
             state.collapsed = !state.collapsed;
             this.panel.classList.toggle('collapsed', state.collapsed);
+            this.elements.collapse.textContent = state.collapsed ? '📝' : '—';
+            this.elements.collapse.title = state.collapsed ? 'Expand panel' : 'Collapse panel';
             Storage.save();
         },
 
@@ -693,12 +739,11 @@
                 }
                 state.lastResult = 'Restored previous progress';
                 this.elements.input.value = state.rawText;
-                this.panel.classList.toggle('collapsed', !!state.collapsed);
-                this.render();
-            } else {
-                this.panel.classList.toggle('collapsed', !!state.collapsed);
-                this.render();
             }
+            this.panel.classList.toggle('collapsed', !!state.collapsed);
+            this.elements.collapse.textContent = state.collapsed ? '📝' : '—';
+            this.elements.collapse.title = state.collapsed ? 'Expand panel' : 'Collapse panel';
+            this.render();
         }
     };
 
@@ -706,26 +751,26 @@
         init() {
             // 清理已存在的全局监听器以防止热重载产生多重触发
             if (window.ceb_keydown_listener) {
-                document.removeEventListener('keydown', window.ceb_keydown_listener);
+                document.removeEventListener('keydown', window.ceb_keydown_listener, true);
                 document.querySelectorAll('iframe').forEach(iframe => {
                     try {
                         const doc = iframe.contentDocument || iframe.contentWindow.document;
                         if (doc) {
-                            doc.removeEventListener('keydown', window.ceb_keydown_listener);
+                            doc.removeEventListener('keydown', window.ceb_keydown_listener, true);
                         }
                     } catch (e) {}
                 });
             }
 
             window.ceb_keydown_listener = (e) => this.handle(e);
-            document.addEventListener('keydown', window.ceb_keydown_listener);
+            document.addEventListener('keydown', window.ceb_keydown_listener, true);
 
             const bindIframe = (iframe) => {
                 try {
                     const doc = iframe.contentDocument || iframe.contentWindow.document;
                     if (doc) {
-                        doc.removeEventListener('keydown', window.ceb_keydown_listener);
-                        doc.addEventListener('keydown', window.ceb_keydown_listener);
+                        doc.removeEventListener('keydown', window.ceb_keydown_listener, true);
+                        doc.addEventListener('keydown', window.ceb_keydown_listener, true);
                     }
                 } catch (e) {
                     // 忽略跨域 iframe 权限限制
@@ -772,12 +817,14 @@
             if (e.altKey === sc.INSERT.alt && !e.ctrlKey && !e.metaKey && e.key.toLowerCase() === sc.INSERT.key) {
                 if (document.activeElement && document.activeElement.id === 'ceb-input') return;
                 e.preventDefault();
+                e.stopImmediatePropagation();
                 UI.handleInsert();
                 return;
             }
             if (e.altKey === sc.PREV.alt && !e.ctrlKey && !e.metaKey && e.key.toLowerCase() === sc.PREV.key) {
                 if (document.activeElement && document.activeElement.id === 'ceb-input') return;
                 e.preventDefault();
+                e.stopImmediatePropagation();
                 UI.handlePrev();
                 return;
             }
@@ -791,14 +838,85 @@
     // 无 contenteditable / textarea 的页面（搜索、资讯、视频、购物首页等）直接静默退出，零打扰
     const Detector = {
         /**
-         * 判断当前页面是否含有富文本编辑器目标
-         * 检测 contenteditable 元素和 textarea（封闭平台编辑器最常见两类）
+         * 判断当前页面是否含有真正的富文本编辑器或大型编辑区
          */
         hasEditor() {
-            return !!(
-                document.querySelector('[contenteditable=""], [contenteditable="true"]') ||
-                document.querySelector('textarea')
-            );
+            // 1. 知名编辑器类名指纹匹配 (高置信度)
+            const knownEditorSelectors = [
+                '.tox-tinymce', '.tox-editor-container',
+                '.ck-editor', '.ck-content',
+                '.ql-container', '.ql-editor',
+                '.w-e-text-container', '.w-e-text',
+                '.edui-editor', '.edui-body-container',
+                '.note-editable',
+                '.DraftEditor-editorContainer',
+                '.medium-editor-element',
+                '.editormd',
+                '.CodeMirror',
+                '.trix-content'
+            ];
+            if (document.querySelector(knownEditorSelectors.join(','))) {
+                return true;
+            }
+
+            // 2. 检测同源 iframe 内部的 contenteditable
+            const iframes = document.querySelectorAll('iframe');
+            for (const iframe of iframes) {
+                try {
+                    const doc = iframe.contentDocument || iframe.contentWindow.document;
+                    if (doc && doc.querySelector('[contenteditable=""], [contenteditable="true"]')) {
+                        if (iframe.clientWidth > 100 && iframe.clientHeight > 30) {
+                            return true;
+                        }
+                    }
+                } catch (e) {}
+            }
+
+            // 3. 通用 contenteditable 启发式规则
+            const editables = document.querySelectorAll('[contenteditable=""], [contenteditable="true"]');
+            for (const el of editables) {
+                if (el.id === 'ceb-input') continue;
+                const rect = el.getBoundingClientRect();
+                const height = rect.height || el.clientHeight;
+                const width = rect.width || el.clientWidth;
+                
+                if (width < 80 || height < 80) continue;
+                
+                // 主文档 contenteditable 必须伴随有排版工具栏，以防止在翻译软件（如 DeepL, 百度翻译，高 200px+）上被误伤
+                const hasToolbar = document.querySelector('[class*="toolbar"]') || 
+                                  document.querySelector('[id*="toolbar"]') || 
+                                  document.querySelector('[role="toolbar"]');
+                if (hasToolbar) {
+                    return true;
+                }
+            }
+
+            // 4. Textarea 启发式规则 (排除了大部分独立的 plain textarea，除非在编辑器容器内且高度足够并伴随工具栏)
+            const textareas = document.querySelectorAll('textarea');
+            for (const ta of textareas) {
+                if (ta.id === 'ceb-input') continue;
+                const rect = ta.getBoundingClientRect();
+                const height = rect.height || ta.clientHeight;
+                const width = rect.width || ta.clientWidth;
+                if (height >= 120 || ta.rows >= 8) {
+                    // 检查是否在编辑器容器中，且伴随工具栏
+                    const inEditorContainer = ta.closest('[class*="editor"]') || ta.closest('[id*="editor"]');
+                    const hasToolbar = document.querySelector('[class*="toolbar"]') || 
+                                      document.querySelector('[id*="toolbar"]') || 
+                                      document.querySelector('[role="toolbar"]');
+                    if (inEditorContainer && hasToolbar) {
+                        const name = (ta.name || '').toLowerCase();
+                        const id = (ta.id || '').toLowerCase();
+                        const placeholder = (ta.placeholder || '').toLowerCase();
+                        const ariaLabel = (ta.getAttribute('aria-label') || '').toLowerCase();
+                        const isChatOrSearch = /chat|search|reply|comment|send|ask|message|搜索|聊天|评论|回复|提问/i.test(name + id + placeholder + ariaLabel);
+                        if (!isChatOrSearch) {
+                            return true;
+                        }
+                    }
+                }
+            }
+            return false;
         }
     };
 
