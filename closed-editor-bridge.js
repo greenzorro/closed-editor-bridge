@@ -10,7 +10,7 @@
 // ==UserScript==
 // @name         closed-editor-bridge
 // @namespace    http://tampermonkey.net/
-// @version      1.0.0
+// @version      1.0.1
 // @description  Paste Markdown into closed rich-text editors segment by segment, following manually uploaded images
 // @author       Victor Cheng
 // @match        *://*/*
