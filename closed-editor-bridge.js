@@ -10,7 +10,7 @@
 // ==UserScript==
 // @name         closed-editor-bridge
 // @namespace    http://tampermonkey.net/
-// @version      1.0.1
+// @version      1.0.2
 // @description  Paste Markdown into closed rich-text editors segment by segment, following manually uploaded images
 // @author       Victor Cheng
 // @match        *://*/*
@@ -31,7 +31,11 @@
             INSERT: { key: 'k', alt: true },   // Alt+K 插入当前段并推进
             PREV: { key: 'j', alt: true }      // Alt+J 回退到上一段
         },
-        PREVIEW_CHARS: 200
+        PREVIEW_CHARS: 200,
+        DETECT_POLL_MS: 1000,
+        DETECT_POLL_MAX_MS: 60000,
+        CURSOR_ADVANCE_MS: 50,
+        STYLE_ID: 'ceb-styles'
     };
 
     //=======================================
@@ -48,20 +52,35 @@
 
     // 记录最后一次聚焦的输入框，用于在点击面板按钮后找回焦点
     let lastFocusedElement = null;
+    let cursorAdvanceTimer = null;
+    let bootstrapped = false;
 
     function log(message, ...args) {
         console.log(`[closed-editor-bridge] ${message}`, ...args);
     }
 
-    // 监听全局聚焦事件，捕获编辑器输入框
-    document.addEventListener('focusin', (e) => {
-        const el = e.target;
-        if (el.isContentEditable || el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') {
-            if (el.id !== 'ceb-input') { // 忽略我们自己的面板输入框
-                lastFocusedElement = el;
-            }
+    function storageKey() {
+        return `${CONFIG.STORAGE_KEY}:${location.pathname || '/'}`;
+    }
+
+    function isEditableTarget(el) {
+        if (!el || el.nodeType !== 1) return false;
+        if (el.id === 'ceb-input') return false;
+        return !!(el.isContentEditable || el.tagName === 'INPUT' || el.tagName === 'TEXTAREA');
+    }
+
+    function rememberFocusedElement(el) {
+        if (isEditableTarget(el)) {
+            lastFocusedElement = el;
         }
-    });
+    }
+
+    function handleFocusIn(e) {
+        rememberFocusedElement(e.target);
+    }
+
+    // 主文档聚焦监听（iframe 内在 Shortcuts 中绑定）
+    document.addEventListener('focusin', handleFocusIn);
 
     //=======================================
     // Markdown 解析与清洗
@@ -89,15 +108,37 @@
         },
 
         /**
+         * 收集 fenced code block 区间，避免代码块内的图片语法被误切
+         */
+        getFencedCodeRanges(body) {
+            const ranges = [];
+            const fenceRe = /^ {0,3}(`{3,}|~{3,})[^\n]*\n[\s\S]*?^ {0,3}\1[ \t]*$/gm;
+            let match;
+            while ((match = fenceRe.exec(body)) !== null) {
+                ranges.push([match.index, match.index + match[0].length]);
+            }
+            return ranges;
+        },
+
+        isInsideRanges(index, ranges) {
+            return ranges.some(([start, end]) => index >= start && index < end);
+        },
+
+        /**
          * 以 Markdown 图片语法 ![alt](url) 为切割点，把正文切成 N+1 个 gap
+         * 跳过 fenced code block 内的匹配
          */
         splitByImages(body) {
             const imageRegex = /!\[[^\]]*\]\([^)]+\)/g;
+            const codeRanges = this.getFencedCodeRanges(body);
             const chunks = [];
             let lastIndex = 0;
             let match;
 
             while ((match = imageRegex.exec(body)) !== null) {
+                if (this.isInsideRanges(match.index, codeRanges)) {
+                    continue;
+                }
                 chunks.push(body.slice(lastIndex, match.index));
                 lastIndex = match.index + match[0].length;
             }
@@ -107,9 +148,9 @@
         },
 
         /**
-         * 转换为富文本 HTML（用于 contenteditable）
+         * 按空行切成段落
          */
-        toHtml(gapText) {
+        splitParagraphs(gapText) {
             const lines = gapText.split('\n');
             const paragraphs = [];
             let current = [];
@@ -126,8 +167,14 @@
                 }
             }
             if (current.length) paragraphs.push(current.join('\n'));
+            return paragraphs;
+        },
 
-            return paragraphs
+        /**
+         * 转换为富文本 HTML（用于 contenteditable）
+         */
+        toHtml(gapText) {
+            return this.splitParagraphs(gapText)
                 .map(text => `<p>${this.inlineClean(text, true)}</p>`)
                 .join('');
         },
@@ -136,26 +183,33 @@
          * 转换为纯文本（用于 textarea/input）
          */
         toPlainText(gapText) {
-            const lines = gapText.split('\n');
-            const paragraphs = [];
-            let current = [];
-
-            for (const line of lines) {
-                const trimmed = line.trim();
-                if (trimmed === '') {
-                    if (current.length) {
-                        paragraphs.push(current.join('\n'));
-                        current = [];
-                    }
-                } else {
-                    current.push(trimmed);
-                }
-            }
-            if (current.length) paragraphs.push(current.join('\n'));
-
-            return paragraphs
+            return this.splitParagraphs(gapText)
                 .map(text => this.inlineClean(text, false))
                 .join('\n\n');
+        },
+
+        escapeAttr(value) {
+            return String(value)
+                .replace(/&/g, '&amp;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;');
+        },
+
+        /**
+         * 仅允许安全链接协议，拒绝 javascript: 等
+         */
+        sanitizeHref(url) {
+            const trimmed = String(url || '').trim();
+            if (!trimmed) return null;
+            if (/^https?:\/\//i.test(trimmed)) return trimmed;
+            if (/^mailto:/i.test(trimmed)) return trimmed;
+            if (trimmed.startsWith('/') || trimmed.startsWith('#') ||
+                trimmed.startsWith('./') || trimmed.startsWith('../')) {
+                return trimmed;
+            }
+            return null;
         },
 
         /**
@@ -163,30 +217,30 @@
          */
         inlineClean(text, toHtml = true) {
             if (toHtml) {
-                // HTML 转义
                 text = text
                     .replace(/&/g, '&amp;')
                     .replace(/</g, '&lt;')
                     .replace(/>/g, '&gt;');
             }
-            
-            // 剥离 Markdown 语法标记
-            text = text.replace(/^#{1,6}\s*/gm, ''); // 标题
-            text = text.replace(/^\s*[-*+]\s+/gm, ''); // 无序列表
-            text = text.replace(/^\s*\d+\.\s+/gm, ''); // 有序列表
-            text = text.replace(/^\s*(?:&gt;|>)\s*/gm, ''); // 引用
-            text = text.replace(/\*\*([^*]+)\*\*/g, '$1'); // 加粗
-            text = text.replace(/\*([^*]+)\*/g, '$1'); // 斜体
+
+            text = text.replace(/^#{1,6}\s*/gm, '');
+            text = text.replace(/^\s*[-*+]\s+/gm, '');
+            text = text.replace(/^\s*\d+\.\s+/gm, '');
+            text = text.replace(/^\s*(?:&gt;|>)\s*/gm, '');
+            text = text.replace(/\*\*([^*]+)\*\*/g, '$1');
+            text = text.replace(/\*([^*]+)\*/g, '$1');
             text = text.replace(/__([^_]+)__/g, '$1');
             text = text.replace(/_([^_]+)_/g, '$1');
-            text = text.replace(/`([^`]+)`/g, '$1'); // 行内代码
+            text = text.replace(/`([^`]+)`/g, '$1');
 
             if (toHtml) {
-                // 将 Markdown 链接转换为带样式的 HTML 链接
-                text = text.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" style="color: #2563eb; text-decoration: underline;">$1</a>');
+                text = text.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_, label, href) => {
+                    const safe = this.sanitizeHref(href);
+                    if (!safe) return label;
+                    return `<a href="${this.escapeAttr(safe)}" target="_blank" rel="noopener noreferrer" style="color: #2563eb; text-decoration: underline;">${label}</a>`;
+                });
                 text = text.replace(/\n/g, '<br>');
             } else {
-                // 纯文本模式下剥离链接只保留文本
                 text = text.replace(/\[([^\]]+)\]\([^)]+\)/g, '$1');
             }
             return text;
@@ -199,8 +253,12 @@
     const Storage = {
         load() {
             try {
-                const data = localStorage.getItem(CONFIG.STORAGE_KEY);
-                return data ? JSON.parse(data) : null;
+                const data = localStorage.getItem(storageKey());
+                if (data) return JSON.parse(data);
+
+                // 兼容旧版全局 key
+                const legacy = localStorage.getItem(CONFIG.STORAGE_KEY);
+                return legacy ? JSON.parse(legacy) : null;
             } catch (e) {
                 log('读取存储失败:', e);
                 return null;
@@ -209,7 +267,7 @@
 
         save() {
             try {
-                localStorage.setItem(CONFIG.STORAGE_KEY, JSON.stringify({
+                localStorage.setItem(storageKey(), JSON.stringify({
                     rawText: state.rawText,
                     gaps: state.gaps,
                     currentIndex: state.currentIndex,
@@ -222,7 +280,12 @@
         },
 
         clear() {
-            localStorage.removeItem(CONFIG.STORAGE_KEY);
+            try {
+                localStorage.removeItem(storageKey());
+                localStorage.removeItem(CONFIG.STORAGE_KEY);
+            } catch (e) {
+                log('清除存储失败:', e);
+            }
         }
     };
 
@@ -244,7 +307,6 @@
                 return false;
             }
 
-            // 优先获取当前活动元素，支持穿透 Iframe 获取其内部的活动焦点
             let target = document.activeElement;
             if (target && target.tagName === 'IFRAME') {
                 try {
@@ -257,7 +319,7 @@
                 }
             }
 
-            if (!target || target.id === 'ceb-input' || (!target.isContentEditable && target.tagName !== 'INPUT' && target.tagName !== 'TEXTAREA')) {
+            if (!isEditableTarget(target)) {
                 target = lastFocusedElement;
             }
 
@@ -270,7 +332,6 @@
             const isTextControl = target.tagName === 'INPUT' || target.tagName === 'TEXTAREA';
 
             if (isTextControl) {
-                // 对于 textarea/input 插入纯文本，包装为：回车 + 文本 + 回车
                 const plainText = Parser.toPlainText(gap.text);
                 if (!plainText) {
                     state.lastResult = 'Current segment is empty after cleanup';
@@ -280,11 +341,13 @@
 
                 target.focus();
                 const oldVal = target.value;
-                
-                // 尝试使用 insertText 保持撤销栈
-                let ok = doc.execCommand('insertText', false, wrappedText);
-                
-                // 如果 insertText 没有生效，直接修改值并派发事件
+                let ok = false;
+                try {
+                    ok = doc.execCommand('insertText', false, wrappedText);
+                } catch (e) {
+                    ok = false;
+                }
+
                 if (!ok || target.value === oldVal) {
                     const start = target.selectionStart;
                     const end = target.selectionEnd;
@@ -293,25 +356,19 @@
                     target.selectionStart = target.selectionEnd = start + wrappedText.length;
                     target.dispatchEvent(new Event('input', { bubbles: true }));
                     target.dispatchEvent(new Event('change', { bubbles: true }));
-                    ok = true;
+                    ok = target.value !== oldVal;
                 }
 
                 if (ok) {
                     state.lastResult = `✓ Inserted segment ${state.currentIndex + 1}/${state.gaps.length}`;
                     log(`插入成功 gap ${state.currentIndex + 1}`);
-                    
-                    // 模拟下移方向键
-                    setTimeout(() => {
-                        this.simulateArrowDown(target);
-                    }, 50);
+                    this.scheduleCursorAdvance(target);
                 } else {
                     state.lastResult = `✗ Failed to insert segment ${state.currentIndex + 1}`;
                 }
                 return ok;
 
             } else {
-                // 对于 contenteditable 插入 HTML，支持 Iframe 文档对象
-                // 包装为：空段落(回车) + 文本段落 + 空段落(回车)
                 const html = Parser.toHtml(gap.text);
                 if (!html) {
                     state.lastResult = 'Current segment is empty after cleanup';
@@ -320,20 +377,32 @@
                 const wrappedHtml = '<p><br></p>' + html + '<p><br></p>';
 
                 target.focus();
-                const ok = doc.execCommand('insertHTML', false, wrappedHtml);
+                let ok = false;
+                try {
+                    ok = doc.execCommand('insertHTML', false, wrappedHtml);
+                } catch (e) {
+                    ok = false;
+                }
+
                 if (ok) {
                     state.lastResult = `✓ Inserted segment ${state.currentIndex + 1}/${state.gaps.length}`;
                     log(`插入成功 gap ${state.currentIndex + 1}`);
-                    
-                    // 模拟下移方向键，光标会精确落在插入内容底部的那个空段落 <p><br></p> 中
-                    setTimeout(() => {
-                        this.simulateArrowDown(target);
-                    }, 50);
+                    this.scheduleCursorAdvance(target);
                 } else {
                     state.lastResult = `✗ Failed to insert segment ${state.currentIndex + 1}`;
                 }
                 return ok;
             }
+        },
+
+        scheduleCursorAdvance(element) {
+            if (cursorAdvanceTimer) {
+                clearTimeout(cursorAdvanceTimer);
+            }
+            cursorAdvanceTimer = setTimeout(() => {
+                cursorAdvanceTimer = null;
+                this.simulateArrowDown(element);
+            }, CONFIG.CURSOR_ADVANCE_MS);
         },
 
         /**
@@ -343,7 +412,6 @@
             const doc = element.ownerDocument || document;
             const win = doc.defaultView || window;
 
-            // 1. 触发 KeyboardEvent 键入事件（下方向键 + 右方向键）
             const eventInitDown = { key: 'ArrowDown', code: 'ArrowDown', keyCode: 40, which: 40, bubbles: true, cancelable: true };
             element.dispatchEvent(new KeyboardEvent('keydown', eventInitDown));
             element.dispatchEvent(new KeyboardEvent('keyup', eventInitDown));
@@ -352,23 +420,24 @@
             element.dispatchEvent(new KeyboardEvent('keydown', eventInitRight));
             element.dispatchEvent(new KeyboardEvent('keyup', eventInitRight));
 
-            // 2. 针对 contenteditable 元素，利用 Selection API 强行推进光标至下一段落或新空行，并向右跨过 <br> 边界
             if (element.isContentEditable) {
                 try {
                     const selection = win.getSelection();
                     if (selection && selection.rangeCount > 0) {
                         const range = selection.getRangeAt(0);
                         let node = range.startContainer;
-                        
-                        // 向上查找到编辑器中的最外层块级段落标签 (P, DIV, LI 等)
+
                         while (node && node !== element && !['P', 'DIV', 'LI', 'BLOCKQUOTE', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6'].includes(node.tagName)) {
                             node = node.parentNode;
                         }
-                        
+
                         if (node && node !== element) {
                             let next = node.nextElementSibling;
-                            // 如果没有下一个邻近段落，则自动创建并追加一个新的空白段落（如 <p><br></p>）
-                            if (!next) {
+                            // 插入包装已带尾部空段；仅在缺失时补一个，避免绕过编辑器模型滥造节点
+                            if (!next && node.parentNode && node.parentNode !== element && element.contains(node.parentNode)) {
+                                next = node.nextElementSibling;
+                            }
+                            if (!next && node.parentNode) {
                                 next = doc.createElement('p');
                                 next.innerHTML = '<br>';
                                 node.parentNode.insertBefore(next, node.nextSibling);
@@ -376,7 +445,7 @@
                             if (next) {
                                 const newRange = doc.createRange();
                                 newRange.selectNodeContents(next);
-                                newRange.collapse(false); // 坍缩光标至段落尾部（即跳过内部 <br>），相当于按了一下右键
+                                newRange.collapse(false);
                                 selection.removeAllRanges();
                                 selection.addRange(newRange);
                             }
@@ -405,15 +474,15 @@
             panel.innerHTML = `
                 <div id="ceb-header">
                     <span id="ceb-title">Markdown Segment Paste Queue</span>
-                    <button id="ceb-collapse" title="Collapse / expand">—</button>
+                    <button type="button" id="ceb-collapse" title="Collapse / expand">—</button>
                 </div>
                 <div id="ceb-body">
                     <textarea id="ceb-input" placeholder="Paste Markdown body here... (image markers will be used as split points)"></textarea>
                     <div id="ceb-actions">
-                        <button id="ceb-prev">Previous (Alt+J)</button>
-                        <button id="ceb-insert">Insert (Alt+K)</button>
-                        <button id="ceb-next">Next</button>
-                        <button id="ceb-reset">Reset</button>
+                        <button type="button" id="ceb-prev">Previous (Alt+J)</button>
+                        <button type="button" id="ceb-insert">Insert (Alt+K)</button>
+                        <button type="button" id="ceb-next">Next</button>
+                        <button type="button" id="ceb-reset">Reset</button>
                     </div>
                     <div id="ceb-status"></div>
                     <div id="ceb-preview"></div>
@@ -442,6 +511,8 @@
         },
 
         injectStyles() {
+            if (document.getElementById(CONFIG.STYLE_ID)) return;
+
             const css = `
                 #ceb-panel {
                     position: fixed;
@@ -570,6 +641,7 @@
                 }
             `;
             const style = document.createElement('style');
+            style.id = CONFIG.STYLE_ID;
             style.textContent = css;
             document.head.appendChild(style);
         },
@@ -580,34 +652,69 @@
             this.elements.prev.addEventListener('click', () => this.handlePrev());
             this.elements.next.addEventListener('click', () => this.handleNext());
             this.elements.reset.addEventListener('click', () => this.handleReset());
-            
-            // 实时自动解析输入框内容
+
             this.elements.input.addEventListener('input', () => {
-                const raw = this.elements.input.value;
-                if (!raw.trim()) {
-                    state = {
-                        rawText: '',
-                        gaps: [],
-                        currentIndex: 0,
-                        skippedCount: 0,
-                        collapsed: state.collapsed,
-                        lastResult: 'Cleared'
-                    };
-                    Storage.clear();
-                    this.render();
-                    return;
-                }
-                state.rawText = raw;
-                const { gaps, skippedCount } = Parser.parse(raw);
-                state.gaps = gaps;
-                state.skippedCount = skippedCount;
-                state.currentIndex = this.findNextInsertableIndex(0, 1);
-                state.lastResult = `Auto-parsed ${gaps.length} segments (${skippedCount} empty skipped)`;
-                Storage.save();
-                this.render();
+                this.applyParsedInput(this.elements.input.value, { preserveIndex: true });
             });
 
             this.enableDrag();
+        },
+
+        /**
+         * 解析输入；preserveIndex 时尽量保留当前队列进度
+         */
+        applyParsedInput(raw, { preserveIndex = false } = {}) {
+            const prevIndex = state.currentIndex;
+            const hadGaps = state.gaps.length > 0;
+
+            if (!raw.trim()) {
+                state = {
+                    rawText: '',
+                    gaps: [],
+                    currentIndex: 0,
+                    skippedCount: 0,
+                    collapsed: state.collapsed,
+                    lastResult: 'Cleared'
+                };
+                Storage.clear();
+                this.render();
+                return;
+            }
+
+            state.rawText = raw;
+            const { gaps, skippedCount } = Parser.parse(raw);
+            state.gaps = gaps;
+            state.skippedCount = skippedCount;
+
+            if (preserveIndex && hadGaps) {
+                state.currentIndex = this.resolvePreservedIndex(prevIndex);
+                state.lastResult = `Auto-parsed ${gaps.length} segments (${skippedCount} empty skipped), kept progress`;
+            } else {
+                const first = this.findNextInsertableIndex(0, 1);
+                state.currentIndex = first === -1 ? 0 : first;
+                state.lastResult = `Auto-parsed ${gaps.length} segments (${skippedCount} empty skipped)`;
+            }
+
+            Storage.save();
+            this.render();
+        },
+
+        /**
+         * 重解析后尽量落在原进度附近的可插入段
+         */
+        resolvePreservedIndex(prevIndex) {
+            if (!state.gaps.length) return 0;
+
+            const clamped = Math.max(0, Math.min(prevIndex, state.gaps.length - 1));
+            if (!state.gaps[clamped].skipped) return clamped;
+
+            const forward = this.findNextInsertableIndex(clamped, 1);
+            if (forward !== -1) return forward;
+
+            const backward = this.findNextInsertableIndex(clamped, -1);
+            if (backward !== -1) return backward;
+
+            return 0;
         },
 
         enableDrag() {
@@ -697,7 +804,7 @@
         },
 
         findNextInsertableIndex(start, direction) {
-            if (!state.gaps.length) return 0;
+            if (!state.gaps.length) return -1;
 
             for (let i = start; i >= 0 && i < state.gaps.length; i += direction) {
                 if (!state.gaps[i].skipped) return i;
@@ -707,7 +814,7 @@
 
         render() {
             const total = state.gaps.length;
-            const current = total ? state.currentIndex + 1 : 0;
+            const current = total && state.currentIndex >= 0 ? state.currentIndex + 1 : 0;
             this.elements.status.innerHTML = `
                 <div>Progress: <b>${current}/${total}</b> | Empty skipped: ${state.skippedCount}</div>
                 <div>${state.lastResult || 'Paste content to auto-parse'}</div>
@@ -748,85 +855,96 @@
     };
 
     const Shortcuts = {
+        iframeObserver: null,
+
         init() {
-            // 清理已存在的全局监听器以防止热重载产生多重触发
             if (window.ceb_keydown_listener) {
                 document.removeEventListener('keydown', window.ceb_keydown_listener, true);
                 document.querySelectorAll('iframe').forEach(iframe => {
-                    try {
-                        const doc = iframe.contentDocument || iframe.contentWindow.document;
-                        if (doc) {
-                            doc.removeEventListener('keydown', window.ceb_keydown_listener, true);
-                        }
-                    } catch (e) {}
+                    this.unbindIframe(iframe);
                 });
             }
 
             window.ceb_keydown_listener = (e) => this.handle(e);
             document.addEventListener('keydown', window.ceb_keydown_listener, true);
 
-            const bindIframe = (iframe) => {
+            document.querySelectorAll('iframe').forEach(iframe => this.bindIframe(iframe));
+
+            if (this.iframeObserver) {
+                this.iframeObserver.disconnect();
+            }
+            this.iframeObserver = new MutationObserver((mutations) => {
+                mutations.forEach((mutation) => {
+                    mutation.addedNodes.forEach((node) => {
+                        if (node.nodeType !== 1) return;
+                        if (node.tagName === 'IFRAME') {
+                            this.bindIframe(node);
+                        } else if (node.querySelectorAll) {
+                            node.querySelectorAll('iframe').forEach(iframe => this.bindIframe(iframe));
+                        }
+                    });
+                });
+            });
+            this.iframeObserver.observe(document.documentElement || document.body, {
+                childList: true,
+                subtree: true
+            });
+        },
+
+        unbindIframe(iframe) {
+            try {
+                const doc = iframe.contentDocument || iframe.contentWindow.document;
+                if (!doc) return;
+                if (window.ceb_keydown_listener) {
+                    doc.removeEventListener('keydown', window.ceb_keydown_listener, true);
+                }
+                doc.removeEventListener('focusin', handleFocusIn);
+            } catch (e) {
+                // 跨域
+            }
+        },
+
+        bindIframe(iframe) {
+            if (!iframe) return;
+
+            const attach = () => {
                 try {
                     const doc = iframe.contentDocument || iframe.contentWindow.document;
-                    if (doc) {
+                    if (!doc) return;
+
+                    if (window.ceb_keydown_listener) {
                         doc.removeEventListener('keydown', window.ceb_keydown_listener, true);
                         doc.addEventListener('keydown', window.ceb_keydown_listener, true);
                     }
+                    doc.removeEventListener('focusin', handleFocusIn);
+                    doc.addEventListener('focusin', handleFocusIn);
                 } catch (e) {
                     // 忽略跨域 iframe 权限限制
                 }
             };
 
-            // 绑定现有 iframe
-            document.querySelectorAll('iframe').forEach(bindIframe);
-
-            // 监听动态添加的 iframe
-            const observer = new MutationObserver((mutations) => {
-                mutations.forEach((mutation) => {
-                    mutation.addedNodes.forEach((node) => {
-                        if (node.tagName === 'IFRAME') {
-                            bindIframe(node);
-                        } else if (node.querySelectorAll) {
-                            node.querySelectorAll('iframe').forEach(bindIframe);
-                        }
-                    });
-                });
-            });
-            observer.observe(document.body, { childList: true, subtree: true });
-
-            // 绑定 focusin 以捕获最后聚焦的元素
-            const handleFocusIn = (e) => {
-                const el = e.target;
-                if (el.isContentEditable || el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') {
-                    if (el.id !== 'ceb-input') {
-                        lastFocusedElement = el;
-                    }
-                }
-            };
-            
-            document.querySelectorAll('iframe').forEach(iframe => {
-                try {
-                    const doc = iframe.contentDocument || iframe.contentWindow.document;
-                    if (doc) doc.addEventListener('focusin', handleFocusIn);
-                } catch(e){}
-            });
+            attach();
+            if (iframe.dataset.cebLoadBound !== '1') {
+                iframe.dataset.cebLoadBound = '1';
+                iframe.addEventListener('load', attach);
+            }
         },
 
         handle(e) {
             const sc = CONFIG.SHORTCUTS;
-            if (e.altKey === sc.INSERT.alt && !e.ctrlKey && !e.metaKey && e.key.toLowerCase() === sc.INSERT.key) {
+            const key = (e.key || '').toLowerCase();
+            if (e.altKey === sc.INSERT.alt && !e.ctrlKey && !e.metaKey && key === sc.INSERT.key) {
                 if (document.activeElement && document.activeElement.id === 'ceb-input') return;
                 e.preventDefault();
                 e.stopImmediatePropagation();
                 UI.handleInsert();
                 return;
             }
-            if (e.altKey === sc.PREV.alt && !e.ctrlKey && !e.metaKey && e.key.toLowerCase() === sc.PREV.key) {
+            if (e.altKey === sc.PREV.alt && !e.ctrlKey && !e.metaKey && key === sc.PREV.key) {
                 if (document.activeElement && document.activeElement.id === 'ceb-input') return;
                 e.preventDefault();
                 e.stopImmediatePropagation();
                 UI.handlePrev();
-                return;
             }
         }
     };
@@ -834,14 +952,8 @@
     //=======================================
     // 编辑器检测
     //=======================================
-    // 通用脚本注入全站，靠编辑器指纹和尺寸启发式判断是否启用
-    // 未命中富文本编辑器或大型编辑区的页面直接静默退出，零打扰
     const Detector = {
-        /**
-         * 判断当前页面是否含有真正的富文本编辑器或大型编辑区
-         */
         hasEditor() {
-            // 1. 知名编辑器类名指纹匹配 (高置信度)
             const knownEditorSelectors = [
                 '.tox-tinymce', '.tox-editor-container',
                 '.ck-editor', '.ck-content',
@@ -859,7 +971,6 @@
                 return true;
             }
 
-            // 2. 检测同源 iframe 内部的 contenteditable
             const iframes = document.querySelectorAll('iframe');
             for (const iframe of iframes) {
                 try {
@@ -872,36 +983,32 @@
                 } catch (e) {}
             }
 
-            // 3. 通用 contenteditable 启发式规则
             const editables = document.querySelectorAll('[contenteditable=""], [contenteditable="true"]');
             for (const el of editables) {
                 if (el.id === 'ceb-input') continue;
                 const rect = el.getBoundingClientRect();
                 const height = rect.height || el.clientHeight;
                 const width = rect.width || el.clientWidth;
-                
+
                 if (width < 80 || height < 80) continue;
-                
-                // 主文档 contenteditable 必须伴随有排版工具栏，以防止在翻译软件（如 DeepL, 百度翻译，高 200px+）上被误伤
-                const hasToolbar = document.querySelector('[class*="toolbar"]') || 
-                                  document.querySelector('[id*="toolbar"]') || 
+
+                const hasToolbar = document.querySelector('[class*="toolbar"]') ||
+                                  document.querySelector('[id*="toolbar"]') ||
                                   document.querySelector('[role="toolbar"]');
                 if (hasToolbar) {
                     return true;
                 }
             }
 
-            // 4. Textarea 启发式规则 (排除了大部分独立的 plain textarea，除非在编辑器容器内且高度足够并伴随工具栏)
             const textareas = document.querySelectorAll('textarea');
             for (const ta of textareas) {
                 if (ta.id === 'ceb-input') continue;
                 const rect = ta.getBoundingClientRect();
                 const height = rect.height || ta.clientHeight;
                 if (height >= 120 || ta.rows >= 8) {
-                    // 检查是否在编辑器容器中，且伴随工具栏
                     const inEditorContainer = ta.closest('[class*="editor"]') || ta.closest('[id*="editor"]');
-                    const hasToolbar = document.querySelector('[class*="toolbar"]') || 
-                                      document.querySelector('[id*="toolbar"]') || 
+                    const hasToolbar = document.querySelector('[class*="toolbar"]') ||
+                                      document.querySelector('[id*="toolbar"]') ||
                                       document.querySelector('[role="toolbar"]');
                     if (inEditorContainer && hasToolbar) {
                         const name = (ta.name || '').toLowerCase();
@@ -920,26 +1027,53 @@
     };
 
     //=======================================
-    // 初始化
+    // 初始化（支持 SPA 延迟出现编辑器）
     //=======================================
-    function init() {
-        // 通用 @match：无编辑器目标的页面静默退出，不注入 UI
-        if (!Detector.hasEditor()) {
-            return;
-        }
+    function bootstrap() {
+        if (bootstrapped) return false;
+        if (!Detector.hasEditor()) return false;
 
-        const start = () => {
-            UI.create();
-            UI.restore();
-            Shortcuts.init();
+        bootstrapped = true;
+        UI.create();
+        UI.restore();
+        Shortcuts.init();
+        log('已加载（检测到编辑器）');
+        return true;
+    }
+
+    function init() {
+        const startWatching = () => {
+            if (bootstrap()) return;
+
+            const startedAt = Date.now();
+            const pollId = setInterval(() => {
+                if (bootstrap() || Date.now() - startedAt >= CONFIG.DETECT_POLL_MAX_MS) {
+                    clearInterval(pollId);
+                }
+            }, CONFIG.DETECT_POLL_MS);
+
+            const observer = new MutationObserver(() => {
+                if (bootstrap()) {
+                    observer.disconnect();
+                    clearInterval(pollId);
+                }
+            });
+
+            const root = document.documentElement || document.body;
+            if (root) {
+                observer.observe(root, { childList: true, subtree: true });
+            }
+
+            setTimeout(() => {
+                observer.disconnect();
+            }, CONFIG.DETECT_POLL_MAX_MS);
         };
 
         if (document.readyState === 'loading') {
-            document.addEventListener('DOMContentLoaded', start);
+            document.addEventListener('DOMContentLoaded', startWatching);
         } else {
-            start();
+            startWatching();
         }
-        log('已加载（检测到编辑器）');
     }
 
     init();
