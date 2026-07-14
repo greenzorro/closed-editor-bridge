@@ -48,6 +48,8 @@ CONFIG
   ├─ STORAGE_KEY           localStorage 前缀
   ├─ SHORTCUTS             快捷键配置
   ├─ PREVIEW_CHARS         当前段预览长度
+  ├─ MIN_EDITOR_WIDTH      编辑器检测最小宽度
+  ├─ MIN_EDITOR_HEIGHT     编辑器检测最小高度
   ├─ DETECT_POLL_MS        SPA 延迟检测轮询间隔
   ├─ DETECT_POLL_MAX_MS    延迟检测最长等待
   ├─ CURSOR_ADVANCE_MS     插入后光标推进延迟
@@ -132,7 +134,7 @@ gap-N
 | `Inserter` | 将当前 gap 插入目标编辑器，并防抖推进光标 |
 | `UI` | 浮动面板、拖拽折叠、解析输入时尽量保留队列进度 |
 | `Shortcuts` | `Alt+K` / `Alt+J`；主文档与同源 iframe（含动态与 load 后）统一监听 |
-| `Detector` | 判断当前页面是否值得注入 UI 和快捷键 |
+| `Detector` | 判断当前页面是否值得注入 UI 和快捷键；所有编辑器分支均需通过最小尺寸门槛 |
 | `bootstrap` | 检测命中后一次性创建 UI 并初始化快捷键；未命中则继续观察 |
 
 ### 2.4 运行策略
@@ -287,12 +289,12 @@ contenteditable 插入失败后不做剪贴板、纯文本、DOM 改写等自动
 
 当前判定顺序：
 
-1. **已知编辑器指纹**：页面命中 TinyMCE、CKEditor、Quill、wangEditor、UEditor、Summernote、Draft.js、Medium Editor、Editor.md、CodeMirror 或 Trix 等选择器时启用。
-2. **同源 iframe 编辑器**：同源 iframe 内部存在 `[contenteditable]`，且 iframe 宽度大于 100px、高度大于 30px 时启用。
+1. **已知编辑器指纹**：页面命中 TinyMCE、CKEditor、Quill、wangEditor、UEditor、Summernote、Draft.js、Medium Editor、Editor.md、CodeMirror 或 Trix 等选择器时，命中的编辑器容器仍须至少为 80px x 80px 才启用。
+2. **同源 iframe 编辑器**：同源 iframe 及其内部 `[contenteditable]` 都须至少为 80px x 80px 才启用。
 3. **主文档 contenteditable**：主文档中的 `[contenteditable]` 需要至少 80px x 80px，并且页面存在 toolbar 类名、toolbar id 或 `role="toolbar"`。
 4. **textarea 编辑区**：原生 textarea 需要高度至少 120px 或 `rows >= 8`，位于 editor 容器内，页面存在 toolbar，并且名称、id、placeholder、aria-label 不像搜索、聊天、评论、回复或提问输入框。
 
-这个检测逻辑优先降低误注入风险。若某个平台被漏检，优先补充高置信度编辑器指纹或更具体的启发式条件，不要退回“只要有 contenteditable 或 textarea 就启用”的宽松策略。
+所有检测分支都必须通过尺寸门槛；已知编辑器指纹只能缩小候选范围，不能绕过高度检测。这个检测逻辑优先降低误注入风险。若某个平台被漏检，优先补充高置信度编辑器指纹或更具体的启发式条件，不要退回“只要有 contenteditable 或 textarea 就启用”的宽松策略。
 
 ### 4.2 SPA 与延迟注入
 

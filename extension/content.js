@@ -22,6 +22,8 @@
             PREV: { key: 'j', alt: true }      // Alt+J 回退到上一段
         },
         PREVIEW_CHARS: 200,
+        MIN_EDITOR_WIDTH: 80,
+        MIN_EDITOR_HEIGHT: 80,
         DETECT_POLL_MS: 1000,
         DETECT_POLL_MAX_MS: 60000,
         CURSOR_ADVANCE_MS: 50,
@@ -943,6 +945,13 @@
     // 编辑器检测
     //=======================================
     const Detector = {
+        hasMinimumEditorSize(el) {
+            const rect = el.getBoundingClientRect();
+            const height = rect.height || el.clientHeight;
+            const width = rect.width || el.clientWidth;
+            return width >= CONFIG.MIN_EDITOR_WIDTH && height >= CONFIG.MIN_EDITOR_HEIGHT;
+        },
+
         hasEditor() {
             const knownEditorSelectors = [
                 '.tox-tinymce', '.tox-editor-container',
@@ -957,16 +966,20 @@
                 '.CodeMirror',
                 '.trix-content'
             ];
-            if (document.querySelector(knownEditorSelectors.join(','))) {
-                return true;
+            const knownEditors = document.querySelectorAll(knownEditorSelectors.join(','));
+            for (const editor of knownEditors) {
+                if (this.hasMinimumEditorSize(editor)) {
+                    return true;
+                }
             }
 
             const iframes = document.querySelectorAll('iframe');
             for (const iframe of iframes) {
                 try {
                     const doc = iframe.contentDocument || iframe.contentWindow.document;
-                    if (doc && doc.querySelector('[contenteditable=""], [contenteditable="true"]')) {
-                        if (iframe.clientWidth > 100 && iframe.clientHeight > 30) {
+                    if (doc && this.hasMinimumEditorSize(iframe)) {
+                        const iframeEditables = doc.querySelectorAll('[contenteditable=""], [contenteditable="true"]');
+                        if ([...iframeEditables].some(el => this.hasMinimumEditorSize(el))) {
                             return true;
                         }
                     }
@@ -976,11 +989,7 @@
             const editables = document.querySelectorAll('[contenteditable=""], [contenteditable="true"]');
             for (const el of editables) {
                 if (el.id === 'ceb-input') continue;
-                const rect = el.getBoundingClientRect();
-                const height = rect.height || el.clientHeight;
-                const width = rect.width || el.clientWidth;
-
-                if (width < 80 || height < 80) continue;
+                if (!this.hasMinimumEditorSize(el)) continue;
 
                 const hasToolbar = document.querySelector('[class*="toolbar"]') ||
                                   document.querySelector('[id*="toolbar"]') ||
