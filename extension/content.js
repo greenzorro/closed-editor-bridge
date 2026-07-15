@@ -27,6 +27,7 @@
         DETECT_POLL_MS: 1000,
         DETECT_POLL_MAX_MS: 60000,
         CURSOR_ADVANCE_MS: 50,
+        DRAG_THRESHOLD_PX: 4,
         STYLE_ID: 'ceb-styles'
     };
 
@@ -39,6 +40,7 @@
         currentIndex: 0,      // 当前 gap 指针
         skippedCount: 0,      // 被跳过的空 gap 数
         collapsed: false,     // 面板折叠状态
+        position: null,       // 面板左上角位置 { left, top }
         lastResult: ''        // 最近一次插入结果提示
     };
 
@@ -264,7 +266,8 @@
                     gaps: state.gaps,
                     currentIndex: state.currentIndex,
                     skippedCount: state.skippedCount,
-                    collapsed: state.collapsed
+                    collapsed: state.collapsed,
+                    position: state.position
                 }));
             } catch (e) {
                 log('保存存储失败:', e);
@@ -285,6 +288,14 @@
     // 插入器
     //=======================================
     const Inserter = {
+        getCodeMirror(target) {
+            const wrapper = typeof target.closest === 'function' ? target.closest('.CodeMirror') : null;
+            const editor = wrapper?.CodeMirror;
+            return editor && typeof editor.getValue === 'function' && typeof editor.replaceSelection === 'function'
+                ? editor
+                : null;
+        },
+
         /**
          * 在当前光标位置插入当前 gap 的内容
          */
@@ -330,6 +341,27 @@
                     return false;
                 }
                 const wrappedText = '\n' + plainText + '\n';
+                const codeMirror = this.getCodeMirror(target);
+
+                if (codeMirror) {
+                    const oldValue = codeMirror.getValue();
+                    let ok = false;
+                    try {
+                        codeMirror.focus();
+                        codeMirror.replaceSelection(wrappedText, 'end');
+                        ok = codeMirror.getValue() !== oldValue;
+                    } catch (e) {
+                        log('CodeMirror 插入失败:', e);
+                    }
+
+                    if (ok) {
+                        state.lastResult = `✓ Inserted segment ${state.currentIndex + 1}/${state.gaps.length}`;
+                        log(`插入成功 gap ${state.currentIndex + 1}`);
+                    } else {
+                        state.lastResult = `✗ Failed to insert segment ${state.currentIndex + 1}`;
+                    }
+                    return ok;
+                }
 
                 target.focus();
                 const oldVal = target.value;
@@ -456,6 +488,7 @@
     const UI = {
         panel: null,
         elements: {},
+        suppressCollapseClick: false,
 
         create() {
             const existing = document.getElementById('ceb-panel');
@@ -471,8 +504,8 @@
                 <div id="ceb-body">
                     <textarea id="ceb-input" placeholder="Paste Markdown body here... (image markers will be used as split points)"></textarea>
                     <div id="ceb-actions">
-                        <button type="button" id="ceb-prev">Previous (Alt+J)</button>
-                        <button type="button" id="ceb-insert">Insert (Alt+K)</button>
+                        <button type="button" id="ceb-prev">Previous (Alt/Option+J)</button>
+                        <button type="button" id="ceb-insert">Insert (Alt/Option+K)</button>
                         <button type="button" id="ceb-next">Next</button>
                         <button type="button" id="ceb-reset">Reset</button>
                     </div>
@@ -486,7 +519,6 @@
             this.panel = panel;
             this.elements = {
                 header: panel.querySelector('#ceb-header'),
-                body: panel.querySelector('#ceb-body'),
                 collapse: panel.querySelector('#ceb-collapse'),
                 input: panel.querySelector('#ceb-input'),
                 insert: panel.querySelector('#ceb-insert'),
@@ -528,7 +560,8 @@
                     background: #f5f5f5;
                     border-bottom: 1px solid #e0e0e0;
                     border-radius: 8px 8px 0 0;
-                    cursor: move;
+                    cursor: grab;
+                    touch-action: none;
                 }
                 #ceb-title { font-weight: 600; font-size: 13px; }
                 #ceb-collapse {
@@ -536,7 +569,7 @@
                     font-size: 16px; color: #666; padding: 0 4px;
                 }
                 #ceb-body { padding: 10px 12px; }
-                #ceb-panel.collapsed {
+                #ceb-panel.ceb-collapsed {
                     width: 40px !important;
                     height: 40px !important;
                     border-radius: 50% !important;
@@ -544,15 +577,20 @@
                     background: #2563eb !important;
                     border: 1px solid #2563eb !important;
                     box-shadow: 0 4px 12px rgba(37, 99, 235, 0.4) !important;
-                    cursor: pointer !important;
+                    cursor: grab !important;
                     transition: transform 0.2s ease, background 0.2s ease !important;
                 }
-                #ceb-panel.collapsed:hover {
+                #ceb-panel.dragging, #ceb-panel.dragging * {
+                    cursor: grabbing !important;
+                    user-select: none !important;
+                }
+                #ceb-panel.dragging { transform: none !important; }
+                #ceb-panel.ceb-collapsed:hover {
                     transform: scale(1.05) !important;
                     background: #1d4ed8 !important;
                     border-color: #1d4ed8 !important;
                 }
-                #ceb-panel.collapsed #ceb-header {
+                #ceb-panel.ceb-collapsed #ceb-header {
                     width: 100% !important;
                     height: 100% !important;
                     padding: 0 !important;
@@ -561,12 +599,12 @@
                     display: flex !important;
                     justify-content: center !important;
                     align-items: center !important;
-                    cursor: pointer !important;
+                    cursor: inherit !important;
                 }
-                #ceb-panel.collapsed #ceb-title {
+                #ceb-panel.ceb-collapsed #ceb-title {
                     display: none !important;
                 }
-                #ceb-panel.collapsed #ceb-collapse {
+                #ceb-panel.ceb-collapsed #ceb-collapse {
                     width: 100% !important;
                     height: 100% !important;
                     color: #fff !important;
@@ -577,8 +615,9 @@
                     padding: 0 !important;
                     border: none !important;
                     background: transparent !important;
+                    cursor: inherit !important;
                 }
-                #ceb-panel.collapsed #ceb-body {
+                #ceb-panel.ceb-collapsed #ceb-body {
                     display: none !important;
                 }
                 #ceb-input {
@@ -639,7 +678,15 @@
         },
 
         bindEvents() {
-            this.elements.collapse.addEventListener('click', () => this.toggleCollapse());
+            this.elements.collapse.addEventListener('click', (e) => {
+                if (this.suppressCollapseClick) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    this.suppressCollapseClick = false;
+                    return;
+                }
+                this.toggleCollapse();
+            });
             this.elements.insert.addEventListener('click', () => this.handleInsert());
             this.elements.prev.addEventListener('click', () => this.handlePrev());
             this.elements.next.addEventListener('click', () => this.handleNext());
@@ -666,9 +713,10 @@
                     currentIndex: 0,
                     skippedCount: 0,
                     collapsed: state.collapsed,
+                    position: state.position,
                     lastResult: 'Cleared'
                 };
-                Storage.clear();
+                Storage.save();
                 this.render();
                 return;
             }
@@ -713,36 +761,89 @@
             const header = this.elements.header;
             const panel = this.panel;
             let isDragging = false;
+            let didDrag = false;
+            let startedOnCollapse = false;
+            let pointerId = null;
             let startX, startY, startLeft, startTop;
 
-            header.addEventListener('mousedown', (e) => {
-                if (e.target === this.elements.collapse) return;
+            panel.addEventListener('pointerdown', (e) => {
+                const isExpandedHeader = header.contains(e.target) && e.target !== this.elements.collapse;
+                if (e.button !== 0 || (!state.collapsed && !isExpandedHeader)) return;
+
                 isDragging = true;
+                didDrag = false;
+                startedOnCollapse = e.target === this.elements.collapse;
+                pointerId = e.pointerId;
                 startX = e.clientX;
                 startY = e.clientY;
+                panel.classList.add('dragging');
                 const rect = panel.getBoundingClientRect();
                 startLeft = rect.left;
                 startTop = rect.top;
+                panel.setPointerCapture(pointerId);
+            });
+
+            panel.addEventListener('pointermove', (e) => {
+                if (!isDragging || e.pointerId !== pointerId) return;
+                const offsetX = e.clientX - startX;
+                const offsetY = e.clientY - startY;
+                if (!didDrag && Math.hypot(offsetX, offsetY) < CONFIG.DRAG_THRESHOLD_PX) return;
+
+                didDrag = true;
+                this.setPosition(startLeft + offsetX, startTop + offsetY);
                 e.preventDefault();
             });
 
-            document.addEventListener('mousemove', (e) => {
-                if (!isDragging) return;
-                const newLeft = Math.max(0, startLeft + e.clientX - startX);
-                const newTop = Math.max(0, startTop + e.clientY - startY);
-                panel.style.left = newLeft + 'px';
-                panel.style.top = newTop + 'px';
-                panel.style.right = 'auto';
-            });
+            const finishDrag = (e) => {
+                if (!isDragging || e.pointerId !== pointerId) return;
+                if (startedOnCollapse && (didDrag || e.type === 'pointerup')) {
+                    this.suppressCollapseClick = true;
+                    setTimeout(() => { this.suppressCollapseClick = false; }, 0);
+                }
+                if (!didDrag && startedOnCollapse && e.type === 'pointerup') {
+                    this.toggleCollapse();
+                }
+                if (didDrag) Storage.save();
+                panel.classList.remove('dragging');
+                isDragging = false;
+                pointerId = null;
+            };
 
-            document.addEventListener('mouseup', () => { isDragging = false; });
+            panel.addEventListener('pointerup', finishDrag);
+            panel.addEventListener('pointercancel', finishDrag);
+        },
+
+        setPosition(left, top) {
+            const rect = this.panel.getBoundingClientRect();
+            const maxLeft = Math.max(0, window.innerWidth - rect.width);
+            const maxTop = Math.max(0, window.innerHeight - rect.height);
+            const position = {
+                left: Math.round(Math.max(0, Math.min(left, maxLeft))),
+                top: Math.round(Math.max(0, Math.min(top, maxTop)))
+            };
+
+            this.panel.style.left = `${position.left}px`;
+            this.panel.style.top = `${position.top}px`;
+            this.panel.style.right = 'auto';
+            state.position = position;
+        },
+
+        restorePosition() {
+            if (!state.position || !Number.isFinite(state.position.left) || !Number.isFinite(state.position.top)) return;
+            this.setPosition(state.position.left, state.position.top);
         },
 
         toggleCollapse() {
+            const previousRect = this.panel.getBoundingClientRect();
             state.collapsed = !state.collapsed;
-            this.panel.classList.toggle('collapsed', state.collapsed);
+            this.panel.classList.toggle('ceb-collapsed', state.collapsed);
             this.elements.collapse.textContent = state.collapsed ? '📝' : '—';
-            this.elements.collapse.title = state.collapsed ? 'Expand panel' : 'Collapse panel';
+            this.elements.collapse.title = state.collapsed ? 'Drag to move; click to expand' : 'Collapse panel';
+            requestAnimationFrame(() => {
+                const nextRect = this.panel.getBoundingClientRect();
+                this.setPosition(previousRect.right - nextRect.width, previousRect.top);
+                Storage.save();
+            });
             Storage.save();
         },
 
@@ -777,10 +878,14 @@
                 currentIndex: 0,
                 skippedCount: 0,
                 collapsed: false,
+                position: null,
                 lastResult: 'Reset'
             };
             this.elements.input.value = '';
-            this.panel.classList.remove('collapsed');
+            this.panel.classList.remove('ceb-collapsed');
+            this.panel.style.left = '';
+            this.panel.style.top = '';
+            this.panel.style.right = '';
             Storage.clear();
             this.render();
         },
@@ -821,7 +926,7 @@
                 this.elements.preview.textContent = '(No content)';
             }
 
-            this.elements.hint.textContent = 'Click inside the editor, press Alt+K to insert, Alt+J to go back';
+            this.elements.hint.textContent = 'Click inside the editor, press Alt/Option+K to insert, Alt/Option+J to go back';
 
             this.elements.prev.disabled = this.findNextInsertableIndex(state.currentIndex - 1, -1) === -1;
             this.elements.next.disabled = this.findNextInsertableIndex(state.currentIndex + 1, 1) === -1;
@@ -830,18 +935,25 @@
 
         restore() {
             const saved = Storage.load();
-            if (saved && saved.gaps && saved.gaps.length) {
-                Object.assign(state, saved);
+            if (saved) {
+                Object.assign(state, saved, {
+                    gaps: Array.isArray(saved.gaps) ? saved.gaps : [],
+                    collapsed: !!saved.collapsed,
+                    position: saved.position && Number.isFinite(saved.position.left) && Number.isFinite(saved.position.top)
+                        ? { left: saved.position.left, top: saved.position.top }
+                        : null
+                });
                 if (state.gaps[state.currentIndex] && state.gaps[state.currentIndex].skipped) {
                     const nextIndex = this.findNextInsertableIndex(state.currentIndex, 1);
                     state.currentIndex = nextIndex === -1 ? 0 : nextIndex;
                 }
-                state.lastResult = 'Restored previous progress';
+                state.lastResult = state.gaps.length ? 'Restored previous progress' : state.lastResult;
                 this.elements.input.value = state.rawText;
             }
-            this.panel.classList.toggle('collapsed', !!state.collapsed);
+            this.panel.classList.toggle('ceb-collapsed', !!state.collapsed);
             this.elements.collapse.textContent = state.collapsed ? '📝' : '—';
-            this.elements.collapse.title = state.collapsed ? 'Expand panel' : 'Collapse panel';
+            this.elements.collapse.title = state.collapsed ? 'Drag to move; click to expand' : 'Collapse panel';
+            this.restorePosition();
             this.render();
         }
     };
@@ -924,15 +1036,21 @@
 
         handle(e) {
             const sc = CONFIG.SHORTCUTS;
-            const key = (e.key || '').toLowerCase();
-            if (e.altKey === sc.INSERT.alt && !e.ctrlKey && !e.metaKey && key === sc.INSERT.key) {
+            const matches = (shortcut) => {
+                const key = (e.key || '').toLowerCase();
+                const physicalKey = `Key${shortcut.key.toUpperCase()}`;
+                return e.altKey === shortcut.alt && !e.ctrlKey && !e.metaKey &&
+                    (key === shortcut.key || e.code === physicalKey);
+            };
+
+            if (matches(sc.INSERT)) {
                 if (document.activeElement && document.activeElement.id === 'ceb-input') return;
                 e.preventDefault();
                 e.stopImmediatePropagation();
                 UI.handleInsert();
                 return;
             }
-            if (e.altKey === sc.PREV.alt && !e.ctrlKey && !e.metaKey && key === sc.PREV.key) {
+            if (matches(sc.PREV)) {
                 if (document.activeElement && document.activeElement.id === 'ceb-input') return;
                 e.preventDefault();
                 e.stopImmediatePropagation();

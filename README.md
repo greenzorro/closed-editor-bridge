@@ -13,8 +13,10 @@ Some platforms require you to upload images manually and do not accept Markdown 
 1. Upload images to the target editor in order;
 2. Paste your Markdown article into the floating panel;
 3. Click between two uploaded images;
-4. Press `Alt+K` to insert the next text section;
-5. Use `Alt+J` if you need to step back in the queue.
+4. Press `Alt+K` (`Option+K` on macOS) to insert the next text section;
+5. Use `Alt+J` (`Option+J` on macOS) if you need to step back in the queue.
+
+Drag the panel by its title bar. When collapsed, drag the circular button itself; a click expands it again. Its position and collapsed state are restored for the current page path.
 
 **将 Markdown 文章粘贴进封闭富文本编辑器**
 
@@ -23,8 +25,10 @@ Some platforms require you to upload images manually and do not accept Markdown 
 1. 先在目标编辑器里按顺序上传图片；
 2. 把 Markdown 文章粘贴到浮动面板；
 3. 点击两张图片之间的空隙；
-4. 按 `Alt+K` 插入下一段文字；
-5. 如果队列走错，用 `Alt+J` 回退。
+4. 按 `Alt+K`（macOS 为 `Option+K`）插入下一段文字；
+5. 如果队列走错，用 `Alt+J`（macOS 为 `Option+J`）回退。
+
+展开时可拖动标题栏；收缩成圆形浮标后可直接拖动浮标，单击可重新展开。当前位置和收缩状态会按页面路径恢复。
 
 ---
 
