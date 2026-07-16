@@ -17,6 +17,7 @@
 // @grant        none
 // @license      MIT
 // @run-at       document-idle
+// @inject-into  page
 // ==/UserScript==
 
 (function() {

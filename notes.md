@@ -33,6 +33,7 @@ Markdown 正文
 
 - `@match *://*/*`：脚本不绑定具体平台域名。
 - `@run-at document-idle`：先立即检测编辑器；未命中时以 1 秒轮询和 DOM 观察继续等待，最长 60 秒。
+- `@inject-into page`：注入页面 JS 上下文（扩展产物为 `content_scripts.world = MAIN`），以便访问编辑器实例（如 CodeMirror 的 `wrapper.CodeMirror`）。`@grant none`，不依赖 `chrome.*`。
 - 已知编辑器（TinyMCE、CKEditor、Quill、wangEditor、UEditor、Summernote、Draft.js、Medium Editor、Editor.md、CodeMirror、Trix）和同源 iframe 编辑器都必须达到 80 × 80 px。
 - 一般 `contenteditable` 还要求页面存在工具栏；原生 `textarea` 还要求足够高度、位于编辑器容器中、页面存在工具栏，并排除搜索、聊天、评论等输入框。
 
