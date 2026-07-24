@@ -2,8 +2,6 @@
 
 *Chrome extension builds of this script are produced with [browser-script-to-extension](https://github.com/greenzorro/browser-script-to-extension).*
 
-Ask an agent to install it (see `# For Agent`). Then use it while pasting articles into closed rich-text editors.
-
 **Paste Markdown articles into closed rich-text editors**
 
 Some platforms require manual image uploads and do not accept Markdown cleanly. This script pastes text back around those images, section by section.
