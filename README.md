@@ -32,6 +32,8 @@ Drag the panel by its title bar. When collapsed, drag the circular button; a cli
 
 Created by [Victor42](https://victor42.work/) & [Agent Vik](https://github.com/agent-vik)
 
+---
+
 # For Agent
 
 Install this helper, verify the floating panel on a target editor page, walk through one Markdown insert cycle, then hand authoring to the human.
