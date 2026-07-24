@@ -1,34 +1,32 @@
 # closed-editor-bridge
 
-[📃 Tampermonkey Script](https://greasyfork.org/en/scripts/586326-closed-editor-bridge)
+*Chrome extension builds of this script are produced with [browser-script-to-extension](https://github.com/greenzorro/browser-script-to-extension).*
 
-[🌐 Chrome Web Store](https://chrome.google.com/webstore/detail/mgkhacgoododonkdglofbdfmbbnffcmi) | [🗄️ Download ZIP](https://github.com/greenzorro/closed-editor-bridge/raw/main/closed-editor-bridge.zip)
-
-*Extension automatically created with [browser-script-to-extension](https://github.com/greenzorro/browser-script-to-extension)*
+Ask an agent to install it (see `# For Agent`). Then use it while pasting articles into closed rich-text editors.
 
 **Paste Markdown articles into closed rich-text editors**
 
-Some platforms require you to upload images manually and do not accept Markdown cleanly. This script helps you paste the text back around those images, one section at a time.
+Some platforms require manual image uploads and do not accept Markdown cleanly. This script pastes text back around those images, section by section.
 
 1. Upload images to the target editor in order;
 2. Paste your Markdown article into the floating panel;
 3. Click between two uploaded images;
 4. Press `Alt+K` (`Option+K` on macOS) to insert the next text section;
-5. Use `Alt+J` (`Option+J` on macOS) if you need to step back in the queue.
+5. Use `Alt+J` (`Option+J` on macOS) to step back in the queue.
 
-Drag the panel by its title bar. When collapsed, drag the circular button itself; a click expands it again. Its position and collapsed state are restored for the current page path.
+Drag the panel by its title bar. When collapsed, drag the circular button; a click expands it. Position and collapsed state restore per page path.
 
 **将 Markdown 文章粘贴进封闭富文本编辑器**
 
-有些平台需要手动上传图片，也不能干净地接收 Markdown。这个脚本可以帮你把文字按图片位置切成多段，再一段段插回编辑器里。
+有些平台要手动传图，也不能干净接收 Markdown。本脚本按图片把文字切段再插回去。
 
 1. 先在目标编辑器里按顺序上传图片；
-2. 把 Markdown 文章粘贴到浮动面板；
-3. 点击两张图片之间的空隙；
-4. 按 `Alt+K`（macOS 为 `Option+K`）插入下一段文字；
-5. 如果队列走错，用 `Alt+J`（macOS 为 `Option+J`）回退。
+2. 把 Markdown 贴到浮动面板；
+3. 点击两张图之间；
+4. `Alt+K`（macOS：`Option+K`）插入下一段；
+5. `Alt+J`（`Option+J`）回退。
 
-展开时可拖动标题栏；收缩成圆形浮标后可直接拖动浮标，单击可重新展开。当前位置和收缩状态会按页面路径恢复。
+可拖标题栏；收成浮标后可拖浮标，单击展开。位置与收缩状态按页面路径恢复。
 
 ---
 
@@ -47,7 +45,7 @@ Install this helper, verify the floating panel on a target editor page, walk thr
 
 ## Steps
 
-1. Install `closed-editor-bridge.js` (GreasyFork) **or** load `closed-editor-bridge.zip` / `extension/`.
+1. Install `closed-editor-bridge.js` or https://greasyfork.org/en/scripts/586326-closed-editor-bridge, **or** load `closed-editor-bridge.zip` / `extension/`.
 2. **One handoff:** install approval; open/login to the destination editor if needed.
 3. On the editor page, confirm the floating panel (or collapsed orb) appears.
 4. Primary path once: human/you upload images in order → paste Markdown into the panel → click between images → `Alt+K` (`Option+K` on macOS) inserts the next text chunk; `Alt+J` steps back if needed.
