@@ -33,3 +33,34 @@ Drag the panel by its title bar. When collapsed, drag the circular button itself
 ---
 
 Created by [Victor42](https://victor42.work/) & [Agent Vik](https://github.com/agent-vik)
+
+# For Agent
+
+Install this helper, verify the floating panel on a target editor page, walk through one Markdown insert cycle, then hand authoring to the human.
+
+`@match` is `*://*/*` (all sites). Prefer testing on the human’s actual closed editor host. Browser tool + page access required; many editors also need a logged-in session.
+
+## Prerequisites
+
+- Chromium-based browser + Tampermonkey or unpacked extension from this repo
+- A rich-text editor page where images are uploaded manually
+
+## Steps
+
+1. Install `closed-editor-bridge.js` (GreasyFork) **or** load `closed-editor-bridge.zip` / `extension/`.
+2. **One handoff:** install approval; open/login to the destination editor if needed.
+3. On the editor page, confirm the floating panel (or collapsed orb) appears.
+4. Primary path once: human/you upload images in order → paste Markdown into the panel → click between images → `Alt+K` (`Option+K` on macOS) inserts the next text chunk; `Alt+J` steps back if needed.
+5. Verify text landed in the editor between images. Then stop—article finishing is human work.
+
+## Hand off to the human
+
+- Choosing the CMS/editor and final copy edits
+- Any site-specific login
+
+## Red lines
+
+- Do not exfiltrate page content or credentials
+- Do not treat “works on one CMS” as license to change global `@match` behavior without being asked
+- Behavior/edge cases: `notes.md`
+- No republish unless asked
