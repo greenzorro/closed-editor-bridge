@@ -32,7 +32,7 @@ Drag the panel by its title bar. When collapsed, drag the circular button; a cli
 
 ---
 
-Created by [Victor42](https://victor42.work/) & [Agent Vik](https://github.com/agent-vik)
+Created by [Victor42](https://victor42.work/) & [Agent Vik](https://github.com/agent-vik/about-me)
 
 ---
 
