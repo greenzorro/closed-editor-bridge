@@ -35,7 +35,10 @@ Markdown 正文
 - `@run-at document-idle`：先立即检测编辑器；未命中时以 1 秒轮询和 DOM 观察继续等待，最长 60 秒。
 - `@inject-into page`：注入页面 JS 上下文（扩展产物为 `content_scripts.world = MAIN`），以便访问编辑器实例（如 CodeMirror 的 `wrapper.CodeMirror`）。`@grant none`，不依赖 `chrome.*`。
 - 已知编辑器（TinyMCE、CKEditor、Quill、wangEditor、UEditor、Summernote、Draft.js、Medium Editor、Editor.md、CodeMirror、Trix）和同源 iframe 编辑器都必须达到 80 × 80 px。
-- 一般 `contenteditable` 还要求页面存在工具栏；原生 `textarea` 还要求足够高度、位于编辑器容器中、页面存在工具栏，并排除搜索、聊天、评论等输入框。
+- 一般 `contenteditable` 还要求页面存在工具栏；
+- 原生 `textarea` 排除搜索、聊天、评论等输入框，并支持两类通用场景：
+  1. 经典单体大输入框：要求足够高度（`height >= 120` 或 `rows >= 8`）、位于编辑/创作类容器或编辑页面中、页面存在工具栏；
+  2. 分段式 / 图文混排占位输入框（如马蜂窝游记等平台）：要求达到正文宽度（`width >= 200`）、位于编辑/创作容器或编辑页面中，且伴随工具栏或同容器具有图文媒体混排特征。
 
 检测只负责决定是否显示面板；实际插入目标由最近一次聚焦的可编辑元素确定。
 
