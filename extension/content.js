@@ -1118,24 +1118,44 @@
             }
 
             const textareas = document.querySelectorAll('textarea');
+            const hasToolbar = !!(document.querySelector('[class*="toolbar"]') ||
+                                 document.querySelector('[id*="toolbar"]') ||
+                                 document.querySelector('[role="toolbar"]'));
+            const isEditPage = /(?:create|edit|modify|write|compose|draft|publish|post|note)/i.test(location.pathname + location.search);
+
             for (const ta of textareas) {
                 if (ta.id === 'ceb-input') continue;
+                const name = (ta.name || '').toLowerCase();
+                const id = (ta.id || '').toLowerCase();
+                const placeholder = (ta.placeholder || '').toLowerCase();
+                const ariaLabel = (ta.getAttribute('aria-label') || '').toLowerCase();
+                const isChatOrSearch = /chat|search|reply|comment|send|ask|message|搜索|聊天|评论|回复|提问/i.test(name + id + placeholder + ariaLabel);
+                if (isChatOrSearch) continue;
+
                 const rect = ta.getBoundingClientRect();
                 const height = rect.height || ta.clientHeight;
-                if (height >= 120 || ta.rows >= 8) {
-                    const inEditorContainer = ta.closest('[class*="editor"]') || ta.closest('[id*="editor"]');
-                    const hasToolbar = document.querySelector('[class*="toolbar"]') ||
-                                      document.querySelector('[id*="toolbar"]') ||
-                                      document.querySelector('[role="toolbar"]');
-                    if (inEditorContainer && hasToolbar) {
-                        const name = (ta.name || '').toLowerCase();
-                        const id = (ta.id || '').toLowerCase();
-                        const placeholder = (ta.placeholder || '').toLowerCase();
-                        const ariaLabel = (ta.getAttribute('aria-label') || '').toLowerCase();
-                        const isChatOrSearch = /chat|search|reply|comment|send|ask|message|搜索|聊天|评论|回复|提问/i.test(name + id + placeholder + ariaLabel);
-                        if (!isChatOrSearch) {
-                            return true;
-                        }
+                const width = rect.width || ta.clientWidth;
+
+                const inEditorContainer = !!ta.closest(
+                    '[class*="editor"], [id*="editor"], [class*="article"], [id*="article"], ' +
+                    '[class*="content_box"], [class*="content-box"], [class*="content"], ' +
+                    '[class*="draft"], [id*="draft"], [class*="post"], [id*="post"]'
+                );
+
+                // 1. 经典单体大输入框
+                if ((height >= 120 || ta.rows >= 8) && (inEditorContainer || isEditPage) && hasToolbar) {
+                    return true;
+                }
+
+                // 2. 分段式 / 图文混排占位输入框（放宽通用规则）
+                if (width >= 200 && (inEditorContainer || isEditPage)) {
+                    const container = ta.closest('div, section, article, main');
+                    const hasMediaSibling = container && !!(
+                        container.querySelector('img') ||
+                        container.parentElement?.querySelector('img, [class*="pic"], [class*="photo"], [class*="image"]')
+                    );
+                    if (hasToolbar || hasMediaSibling) {
+                        return true;
                     }
                 }
             }
